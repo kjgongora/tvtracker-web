@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>TV Tracker</title>
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TV Tracker">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+  <main id="screen-watching" class="screen active"></main>
+  <main id="screen-library" class="screen"></main>
+  <main id="screen-upcoming" class="screen"></main>
+  <main id="screen-search" class="screen"></main>
+  <main id="screen-settings" class="screen"></main>
+  <main id="screen-detail" class="screen detail-screen"></main>
+
+  <nav id="tab-bar" class="tab-bar">
+    <button class="tab-btn active" data-tab="watching" aria-label="Watching">
+      <svg viewBox="0 0 24 24" class="tab-icon"><path d="M4 5h16v12H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M9 19h6M12 17v2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Watching</span>
+    </button>
+    <button class="tab-btn" data-tab="library" aria-label="Library">
+      <svg viewBox="0 0 24 24" class="tab-icon"><rect x="4" y="3" width="4.5" height="18" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="9.75" y="3" width="4.5" height="18" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="15.5" y="3" width="4.5" height="18" rx="1" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+      <span>Library</span>
+    </button>
+    <button class="tab-btn" data-tab="upcoming" aria-label="Upcoming">
+      <svg viewBox="0 0 24 24" class="tab-icon"><rect x="4" y="5" width="16" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 9h16M8 3v4M16 3v4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Upcoming</span>
+    </button>
+    <button class="tab-btn" data-tab="search" aria-label="Search">
+      <svg viewBox="0 0 24 24" class="tab-icon"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      <span>Search</span>
+    </button>
+    <button class="tab-btn" data-tab="settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" class="tab-icon"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 13a1.7 1.7 0 000-2l1.2-1.6-2-2L17 8.6a1.7 1.7 0 00-2 0L13.4 6.4h-2.8L10 8.6a1.7 1.7 0 00-2 0L6.4 7.4l-2 2L5.6 11a1.7 1.7 0 000 2L4.4 14.6l2 2L8 15.4a1.7 1.7 0 002 0l1.6 1.2h2.8l1.6-1.2a1.7 1.7 0 002 0l1.6 1.2 2-2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+      <span>Settings</span>
+    </button>
+  </nav>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="data.js"></script>
+<script src="tmdb-client.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
