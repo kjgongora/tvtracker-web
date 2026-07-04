@@ -566,13 +566,12 @@ h1.page-title {
   padding: 10px 0;
   border-bottom: 0.5px solid var(--divider);
   width: 100%;
-  background: none;
-  border-left: none;
-  border-right: none;
-  border-top: none;
-  text-align: left;
-  color: inherit;
-  font: inherit;
+  cursor: pointer;
+}
+
+.search-result-text {
+  flex: 1;
+  min-width: 0;
 }
 
 .search-poster {
@@ -615,11 +614,43 @@ h1.page-title {
 .plus-icon {
   margin-left: auto;
   color: var(--text-secondary);
+  background: none;
+  border: none;
+  padding: 4px;
+  flex-shrink: 0;
 }
 
 .plus-icon svg {
   width: 22px;
   height: 22px;
+}
+
+.cast-list {
+  font-size: 13px;
+  color: #d1d1d6;
+  line-height: 1.5;
+  margin: 0 0 4px;
+}
+
+.info-add-wrap {
+  margin: 20px 0 4px;
+}
+
+.info-add-btn {
+  display: block;
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.info-add-btn:disabled {
+  background: var(--card-2);
+  color: var(--text-muted);
 }
 
 /* Settings */
