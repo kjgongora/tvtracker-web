@@ -19,8 +19,9 @@ async function searchTmdbShows(query) {
     .slice(0, 20);
 }
 
-async function fetchFullShow(tmdbId) {
-  const details = await fetchTmdb(`/tv/${tmdbId}`);
+async function fetchFullShow(tmdbId, options) {
+  const includeCast = !!(options && options.includeCast);
+  const details = await fetchTmdb(`/tv/${tmdbId}`, includeCast ? { append_to_response: "credits" } : undefined);
   const seasonNumbers = (details.seasons || [])
     .map(s => s.season_number)
     .filter(n => n > 0); // skip "Specials" (season 0)
@@ -44,6 +45,10 @@ async function fetchFullShow(tmdbId) {
     }))
     .filter(s => s.episodes.length > 0);
 
+  const cast = includeCast && details.credits && details.credits.cast
+    ? details.credits.cast.slice(0, 10).map(c => ({ name: c.name, character: c.character || "" }))
+    : [];
+
   return {
     id: `tmdb-${tmdbId}`,
     tmdbId,
@@ -53,6 +58,7 @@ async function fetchFullShow(tmdbId) {
     status: details.status || "Unknown",
     runtimeMinutes: (details.episode_run_time && details.episode_run_time[0]) || 30,
     synopsis: details.overview || "No synopsis available.",
+    cast,
     seasons
   };
 }
