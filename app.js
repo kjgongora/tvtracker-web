@@ -503,7 +503,13 @@ function renderUpcoming() {
       });
     });
   });
-  items.sort((a, b) => new Date(a.episode.airDate) - new Date(b.episode.airDate));
+  // Episodes with no announced air date yet must sort to the end, not to
+  // the epoch (new Date(null) === 1970-01-01, which is always "this week")
+  items.sort((a, b) => {
+    const ad = a.episode.airDate ? new Date(a.episode.airDate).getTime() : Infinity;
+    const bd = b.episode.airDate ? new Date(b.episode.airDate).getTime() : Infinity;
+    return ad - bd;
+  });
 
   if (items.length === 0) {
     el.innerHTML = `<h1 class="page-title">Upcoming</h1>` + emptyState(
@@ -514,8 +520,12 @@ function renderUpcoming() {
 
   const now = new Date();
   const weekOut = new Date(now.getTime() + 7 * 86400000);
-  const groups = { Today: [], "This week": [], Later: [] };
+  const groups = { Today: [], "This week": [], Later: [], "Date TBA": [] };
   items.forEach(item => {
+    if (!item.episode.airDate) {
+      groups["Date TBA"].push(item);
+      return;
+    }
     const d = new Date(item.episode.airDate);
     if (d.toDateString() === now.toDateString()) groups.Today.push(item);
     else if (d <= weekOut) groups["This week"].push(item);
@@ -536,7 +546,7 @@ function renderUpcoming() {
             ${item.isPremiere ? `<span class="tag premiere">Season premiere</span>` : ""}
             ${item.isFinale ? `<span class="tag finale">Season finale</span>` : ""}
           </div>
-          <div class="upcoming-date">${fmtShort(item.episode.airDate)}</div>
+          <div class="upcoming-date">${item.episode.airDate ? fmtShort(item.episode.airDate) : "TBA"}</div>
         </div>`;
     });
   });
