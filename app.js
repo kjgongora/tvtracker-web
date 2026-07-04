@@ -11,10 +11,25 @@ let searchLoading = false;
 let searchError = null;
 let searchDebounceTimer = null;
 let addingShowId = null;
+let infoShowCache = null; // full fetched show data for the currently open info screen
+let infoSeasonNum = null;
 
 // ---- Derived helpers ----
 function findShow(id) {
   return shows.find(s => s.id === id);
+}
+
+// Adds `show` to the tracked list if it isn't already there, returning
+// whichever object should now be treated as canonical (the existing one if
+// present, so we never clobber real progress with fresh preview data).
+function ensureShowTracked(show, defaultState) {
+  const existing = findShow(show.id);
+  if (existing) return existing;
+  show.isPinned = false;
+  show.state = defaultState || "watching";
+  shows.push(show);
+  persist();
+  return show;
 }
 
 function currentSeason(show) {
@@ -176,6 +191,18 @@ function closeDetail() {
   setActiveTab(previousTab);
 }
 
+function openShowInfo(result) {
+  previousTab = activeTab;
+  document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
+  document.getElementById("screen-show-info").classList.add("active");
+  document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
+  renderShowInfo(result);
+}
+
+function closeShowInfo() {
+  setActiveTab(previousTab);
+}
+
 function renderActive() {
   if (activeTab === "watching") renderWatching();
   else if (activeTab === "library") renderLibrary();
@@ -185,23 +212,48 @@ function renderActive() {
 }
 
 // ---- Watching screen ----
+function hasAnyWatchedEpisode(show) {
+  return show.seasons.some(season => season.episodes.some(ep => ep.watched));
+}
+
 function renderWatching() {
   const el = document.getElementById("screen-watching");
-  const watching = shows
+  const eligible = shows
     .filter(s => s.state === "watching")
     .map(s => ({ show: s, active: activeSeasonAndEpisode(s) }))
-    .filter(entry => entry.active) // hide shows with nothing new to watch yet
-    .sort((a, b) => (b.show.isPinned - a.show.isPinned) || a.show.title.localeCompare(b.show.title));
+    .filter(entry => entry.active); // hide shows with nothing new to watch yet
 
-  if (watching.length === 0) {
+  const inProgress = eligible.filter(e => hasAnyWatchedEpisode(e.show));
+  const notStarted = eligible.filter(e => !hasAnyWatchedEpisode(e.show));
+
+  // Pinned first, then by the air date of the waiting episode — most recent first
+  const byRecency = (a, b) =>
+    (b.show.isPinned - a.show.isPinned) ||
+    (new Date(b.active.episode.airDate) - new Date(a.active.episode.airDate));
+  inProgress.sort(byRecency);
+  notStarted.sort(byRecency);
+
+  if (inProgress.length === 0 && notStarted.length === 0) {
     el.innerHTML = `<h1 class="page-title">Watching</h1>` + emptyState(
       ICONS.tv, "Nothing to watch right now", "Shows appear here once there's a new episode ready. Add a show from Search, or check Upcoming for what's airing next."
     );
     return;
   }
 
-  let html = `<h1 class="page-title">Watching</h1><div class="poster-grid">`;
-  watching.forEach(({ show, active }) => {
+  let html = `<h1 class="page-title">Watching</h1>`;
+  html += watchingSection("Watching", inProgress);
+  html += watchingSection("Not Started", notStarted);
+  el.innerHTML = html;
+
+  el.querySelectorAll(".poster-card").forEach(card => {
+    card.addEventListener("click", () => openDetail(card.getAttribute("data-id")));
+  });
+}
+
+function watchingSection(label, entries) {
+  if (entries.length === 0) return "";
+  let html = `<div class="section-label">${label}</div><div class="poster-grid">`;
+  entries.forEach(({ show, active }) => {
     const p = seasonProgress(active.season);
     html += `
       <button class="poster-card" data-id="${show.id}">
@@ -215,10 +267,7 @@ function renderWatching() {
       </button>`;
   });
   html += `</div>`;
-  el.innerHTML = html;
-  el.querySelectorAll(".poster-card").forEach(card => {
-    card.addEventListener("click", () => openDetail(card.getAttribute("data-id")));
-  });
+  return html;
 }
 
 function emptyState(icon, title, body) {
@@ -580,20 +629,29 @@ function renderSearchResults() {
   searchResults.forEach(r => {
     const year = r.first_air_date ? r.first_air_date.slice(0, 4) : "";
     html += `
-      <button class="search-result-row" data-id="${r.id}">
+      <div class="search-result-row" data-id="${r.id}">
         <div class="search-poster">${r.poster_path ? `<img class="poster-img" src="${posterUrl(r.poster_path, "w92")}" alt="" loading="lazy">` : ICONS.tv}</div>
-        <div>
+        <div class="search-result-text">
           <p class="search-result-title">${escapeHtml(r.name)}</p>
           <p class="search-result-sub">${year}</p>
         </div>
-        <div class="plus-icon">${ICONS.plusCircle}</div>
-      </button>`;
+        <button class="plus-icon" data-id="${r.id}" aria-label="Quick add">${ICONS.plusCircle}</button>
+      </div>`;
   });
   el.innerHTML = html;
 
   el.querySelectorAll(".search-result-row").forEach(row => {
-    row.addEventListener("click", () => {
+    row.addEventListener("click", e => {
+      if (e.target.closest(".plus-icon")) return;
       const result = searchResults.find(x => String(x.id) === row.getAttribute("data-id"));
+      openShowInfo(result);
+    });
+  });
+
+  el.querySelectorAll(".plus-icon").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const result = searchResults.find(x => String(x.id) === btn.getAttribute("data-id"));
       openSheet("How do you want to track this?", [
         { label: "Start from the beginning", action: () => addShowFromTmdb(result, "beginning") },
         { label: "Mark all previous watched", action: () => addShowFromTmdb(result, "caughtUp") },
@@ -619,14 +677,189 @@ async function addShowFromTmdb(result, mode) {
     shows.push(fullShow);
     persist();
     searchQuery = "";
-    showToast(`${fullShow.title} added to your shows`);
-    setActiveTab("watching");
+    showToast(`${fullShow.title} added${mode === "watchlist" ? " to your Watchlist" : ""}`);
+    setActiveTab(mode === "watchlist" ? "library" : "watching");
+    return fullShow;
   } catch (err) {
     showToast("Couldn't add that show. Try again.");
+    return null;
   }
 }
 
-// ---- Settings screen ----
+async function renderShowInfo(result) {
+  const el = document.getElementById("screen-show-info");
+  const backBtn = `<div class="detail-topbar"><button class="back-btn" id="info-back">${ICONS.chevronLeft}Back</button></div>`;
+
+  // Re-fetch only if this is a different show than whatever's cached
+  if (!infoShowCache || infoShowCache.tmdbId !== result.id) {
+    el.innerHTML = `${backBtn}<div class="search-loading">Loading show info&hellip;</div>`;
+    document.getElementById("info-back").addEventListener("click", closeShowInfo);
+    try {
+      infoShowCache = await fetchFullShow(result.id, { includeCast: true });
+      infoSeasonNum = currentSeason(infoShowCache).seasonNumber;
+    } catch (err) {
+      el.innerHTML = `${backBtn}<div class="search-error">Couldn't load info for this show. Try again.</div>`;
+      document.getElementById("info-back").addEventListener("click", closeShowInfo);
+      return;
+    }
+  }
+
+  const previewShow = infoShowCache;
+  const tracked = findShow(previewShow.id);
+  const alreadyAdded = !!tracked;
+  const season = previewShow.seasons.find(s => s.seasonNumber === infoSeasonNum) || currentSeason(previewShow);
+
+  let html = `${backBtn}
+    <div class="detail-header">
+      <div class="detail-poster">${posterMarkup(previewShow, "w300")}</div>
+      <div>
+        <p class="detail-title">${escapeHtml(previewShow.title)}</p>
+        <p class="detail-meta">${escapeHtml(previewShow.network)} &middot; ${escapeHtml(previewShow.status)}</p>
+        <p class="detail-meta">${previewShow.runtimeMinutes} min episodes</p>
+      </div>
+    </div>
+    <p class="detail-synopsis">${escapeHtml(previewShow.synopsis)}</p>`;
+
+  if (previewShow.cast && previewShow.cast.length) {
+    const castNames = previewShow.cast.map(c => c.character ? `${c.name} as ${c.character}` : c.name);
+    html += `<div class="section-label">Cast</div><p class="cast-list">${escapeHtml(castNames.join(", "))}</p>`;
+  }
+
+  html += `<div class="season-chips">`;
+  [...previewShow.seasons].sort((a, b) => a.seasonNumber - b.seasonNumber).forEach(s => {
+    html += `<button class="season-chip${s.seasonNumber === season.seasonNumber ? " active" : ""}" data-n="${s.seasonNumber}">Season ${s.seasonNumber}</button>`;
+  });
+  html += `</div>`;
+
+  html += `<div class="episode-list">`;
+  season.episodes.forEach(ep => {
+    const aired = hasAired(ep.airDate);
+    // Reflect real watched state if this show is already tracked, since
+    // infoShowCache itself never carries watched progress.
+    const watched = tracked
+      ? !!(tracked.seasons.find(s => s.seasonNumber === season.seasonNumber) || {}).episodes
+          ?.find(e => e.episodeNumber === ep.episodeNumber)?.watched
+      : false;
+    html += `
+      <div class="episode-row" data-n="${ep.episodeNumber}">
+        <button class="ep-toggle ${watched ? "watched" : "unwatched"}${aired ? "" : " unaired"}" data-n="${ep.episodeNumber}" ${aired ? "" : "disabled"} aria-label="Toggle watched">
+          ${watched ? ICONS.check : ICONS.circle}
+        </button>
+        <div class="episode-info">
+          <p class="episode-title${watched ? " watched" : ""}">Episode ${ep.episodeNumber} &middot; ${escapeHtml(ep.title)}</p>
+          <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) : "Air date TBA")}</p>
+        </div>
+      </div>`;
+  });
+  html += `</div>`;
+
+  html += `<div class="info-add-wrap">
+      <button id="info-add-watchlist" class="info-add-btn" ${alreadyAdded ? "disabled" : ""}>
+        ${alreadyAdded ? "Already in your library" : "Add to Watchlist"}
+      </button>
+    </div>`;
+
+  el.innerHTML = html;
+  document.getElementById("info-back").addEventListener("click", closeShowInfo);
+
+  el.querySelectorAll(".season-chip").forEach(chip => {
+    chip.addEventListener("click", () => {
+      infoSeasonNum = parseInt(chip.getAttribute("data-n"));
+      renderShowInfo(result);
+    });
+  });
+
+  el.querySelectorAll(".ep-toggle").forEach(btn => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
+      const n = parseInt(btn.getAttribute("data-n"));
+      const ep = season.episodes.find(x => x.episodeNumber === n);
+      handleInfoEpisodeToggle(previewShow, season.seasonNumber, ep);
+    });
+  });
+
+  el.querySelectorAll(".episode-row").forEach(row => {
+    row.addEventListener("click", () => {
+      const n = parseInt(row.getAttribute("data-n"));
+      const ep = season.episodes.find(x => x.episodeNumber === n);
+      openInfoEpisodeSheet(previewShow, season, ep);
+    });
+  });
+
+  const addBtn = document.getElementById("info-add-watchlist");
+  if (addBtn && !alreadyAdded) {
+    addBtn.addEventListener("click", async () => {
+      addBtn.disabled = true;
+      addBtn.textContent = "Adding\u2026";
+      const added = await addShowFromTmdb(result, "watchlist");
+      if (added) closeShowInfo();
+      else {
+        addBtn.disabled = false;
+        addBtn.textContent = "Add to Watchlist";
+      }
+    });
+  }
+}
+
+// Marking an episode watched from the info/preview screen means the person
+// wants to actually track this show — so add it first if it isn't tracked
+// yet, then apply the toggle, then hand off to the real tracked detail view.
+function handleInfoEpisodeToggle(previewShow, seasonNumber, episode) {
+  const wasTracked = !!findShow(previewShow.id);
+  const tracked = ensureShowTracked(previewShow, "watching");
+  if (!wasTracked) showToast(`${tracked.title} added to your shows`);
+  const season = tracked.seasons.find(s => s.seasonNumber === seasonNumber);
+  const ep = season.episodes.find(e => e.episodeNumber === episode.episodeNumber);
+  ep.watched = !ep.watched;
+  persist();
+  infoShowCache = null; // force a clean re-fetch next time info is opened
+  openDetail(tracked.id);
+}
+
+function openInfoEpisodeSheet(previewShow, season, episode) {
+  const tracked = findShow(previewShow.id);
+  const trackedEpisode = tracked
+    ? tracked.seasons.find(s => s.seasonNumber === season.seasonNumber)?.episodes.find(e => e.episodeNumber === episode.episodeNumber)
+    : null;
+  const watched = trackedEpisode ? trackedEpisode.watched : false;
+  const aired = hasAired(episode.airDate);
+
+  closeSheet();
+  const overlay = document.createElement("div");
+  overlay.className = "sheet-overlay";
+  overlay.id = "active-sheet";
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+
+  let html = `
+    <div class="episode-sheet-header">
+      <p class="episode-sheet-eyebrow">${escapeHtml(previewShow.title)} &middot; Season ${season.seasonNumber}</p>
+      <p class="episode-sheet-title">Episode ${episode.episodeNumber} &middot; ${escapeHtml(episode.title)}</p>
+      <p class="episode-sheet-date">${aired ? fmtMed(episode.airDate) : (episode.airDate ? "Airs " + fmtMed(episode.airDate) : "Air date TBA")}</p>
+    </div>
+    <p class="episode-sheet-synopsis">${escapeHtml(episode.overview && episode.overview.trim() ? episode.overview : "No synopsis available for this episode yet.")}</p>`;
+
+  if (aired) {
+    html += `
+      <div style="border-top: 0.5px solid var(--divider); margin-top: 8px;">
+        <button class="sheet-btn" id="info-ep-sheet-toggle">${watched ? "Mark unwatched" : "Mark watched"}</button>
+      </div>`;
+  }
+  html += `<button class="sheet-btn cancel" id="info-ep-sheet-close">Close</button>`;
+
+  sheet.innerHTML = html;
+  overlay.appendChild(sheet);
+  overlay.addEventListener("click", e => { if (e.target === overlay) closeSheet(); });
+  document.body.appendChild(overlay);
+
+  document.getElementById("info-ep-sheet-close").addEventListener("click", closeSheet);
+  const toggleBtn = document.getElementById("info-ep-sheet-toggle");
+  if (toggleBtn) toggleBtn.addEventListener("click", () => {
+    closeSheet();
+    handleInfoEpisodeToggle(previewShow, season.seasonNumber, episode);
+  });
+}
+
 function renderSettings() {
   const el = document.getElementById("screen-settings");
   el.innerHTML = `
