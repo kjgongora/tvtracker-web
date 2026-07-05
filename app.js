@@ -123,7 +123,7 @@ function openEpisodeSheet(show, season, episode, onDone) {
     <div class="episode-sheet-header">
       <p class="episode-sheet-eyebrow">${escapeHtml(show.title)} &middot; Season ${season.seasonNumber}</p>
       <p class="episode-sheet-title">Episode ${episode.episodeNumber} &middot; ${escapeHtml(episode.title)}</p>
-      <p class="episode-sheet-date">${aired ? fmtMed(episode.airDate) : (episode.airDate ? "Airs " + fmtMed(episode.airDate) : "Air date TBA")}</p>
+      <p class="episode-sheet-date">${aired ? fmtMed(episode.airDate) : (episode.airDate ? "Airs " + fmtMed(episode.airDate) + (episode.airTimeKnown ? " at " + fmtTimeET(episode.airDate) : "") : "Air date TBA")}</p>
     </div>
     <p class="episode-sheet-synopsis">${escapeHtml(episode.overview && episode.overview.trim() ? episode.overview : "No synopsis available for this episode yet.")}</p>`;
 
@@ -432,7 +432,7 @@ function renderDetail() {
         </button>
         <div class="episode-info">
           <p class="episode-title${ep.watched ? " watched" : ""}">Episode ${ep.episodeNumber} &middot; ${ep.title}</p>
-          <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) : "Air date TBA")}</p>
+          <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) + (ep.airTimeKnown ? " at " + fmtTimeET(ep.airDate) : "") : "Air date TBA")}</p>
         </div>
       </div>`;
   });
@@ -757,7 +757,7 @@ async function renderShowInfo(result) {
         </button>
         <div class="episode-info">
           <p class="episode-title${watched ? " watched" : ""}">Episode ${ep.episodeNumber} &middot; ${escapeHtml(ep.title)}</p>
-          <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) : "Air date TBA")}</p>
+          <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) + (ep.airTimeKnown ? " at " + fmtTimeET(ep.airDate) : "") : "Air date TBA")}</p>
         </div>
       </div>`;
   });
@@ -845,7 +845,7 @@ function openInfoEpisodeSheet(previewShow, season, episode) {
     <div class="episode-sheet-header">
       <p class="episode-sheet-eyebrow">${escapeHtml(previewShow.title)} &middot; Season ${season.seasonNumber}</p>
       <p class="episode-sheet-title">Episode ${episode.episodeNumber} &middot; ${escapeHtml(episode.title)}</p>
-      <p class="episode-sheet-date">${aired ? fmtMed(episode.airDate) : (episode.airDate ? "Airs " + fmtMed(episode.airDate) : "Air date TBA")}</p>
+      <p class="episode-sheet-date">${aired ? fmtMed(episode.airDate) : (episode.airDate ? "Airs " + fmtMed(episode.airDate) + (episode.airTimeKnown ? " at " + fmtTimeET(episode.airDate) : "") : "Air date TBA")}</p>
     </div>
     <p class="episode-sheet-synopsis">${escapeHtml(episode.overview && episode.overview.trim() ? episode.overview : "No synopsis available for this episode yet.")}</p>`;
 
