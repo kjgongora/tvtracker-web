@@ -4,6 +4,7 @@
 }
 
 :root {
+  color-scheme: dark;
   --bg: #000000;
   --card: #1c1c1e;
   --card-2: #2c2c2e;
