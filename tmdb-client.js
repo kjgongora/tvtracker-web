@@ -21,7 +21,13 @@ async function searchTmdbShows(query) {
 
 async function fetchFullShow(tmdbId, options) {
   const includeCast = !!(options && options.includeCast);
-  const details = await fetchTmdb(`/tv/${tmdbId}`, includeCast ? { append_to_response: "credits" } : undefined);
+  const appendParts = ["external_ids"];
+  if (includeCast) appendParts.push("credits");
+  const details = await fetchTmdb(`/tv/${tmdbId}`, { append_to_response: appendParts.join(",") });
+
+  const imdbId = details.external_ids && details.external_ids.imdb_id;
+  const tvMazeTimes = await fetchTVMazeEpisodeTimes(imdbId);
+
   const seasonNumbers = (details.seasons || [])
     .map(s => s.season_number)
     .filter(n => n > 0); // skip "Specials" (season 0)
@@ -34,14 +40,18 @@ async function fetchFullShow(tmdbId, options) {
     .filter(Boolean)
     .map(sd => ({
       seasonNumber: sd.season_number,
-      episodes: (sd.episodes || []).map(e => ({
-        id: `tmdb${tmdbId}s${sd.season_number}e${e.episode_number}`,
-        episodeNumber: e.episode_number,
-        title: e.name || `Episode ${e.episode_number}`,
-        airDate: e.air_date ? `${e.air_date}T12:00:00.000Z` : null,
-        watched: false,
-        overview: e.overview || ""
-      }))
+      episodes: (sd.episodes || []).map(e => {
+        const realAirstamp = tvMazeTimes && tvMazeTimes[`${sd.season_number}-${e.episode_number}`];
+        return {
+          id: `tmdb${tmdbId}s${sd.season_number}e${e.episode_number}`,
+          episodeNumber: e.episode_number,
+          title: e.name || `Episode ${e.episode_number}`,
+          airDate: realAirstamp ? new Date(realAirstamp).toISOString() : episodeAirDateTimeFallback(e.air_date),
+          airTimeKnown: !!realAirstamp,
+          watched: false,
+          overview: e.overview || ""
+        };
+      })
     }))
     .filter(s => s.episodes.length > 0);
 
