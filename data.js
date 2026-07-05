@@ -37,6 +37,25 @@ function daysFromNow(n) {
   return d.toISOString();
 }
 
+// Converts a wall-clock time in America/New_York (handles EST/EDT automatically,
+// no timezone library needed) into the correct UTC instant.
+function easternTimeToUTC(dateStr, hour, minute) {
+  const naiveUTC = new Date(`${dateStr}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00Z`);
+  const asEasternWallClock = new Date(naiveUTC.toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const offsetMs = naiveUTC.getTime() - asEasternWallClock.getTime();
+  return new Date(naiveUTC.getTime() + offsetMs);
+}
+
+// Fallback ONLY: used when we have no real per-episode broadcast time (see
+// tvmaze-client.js, which supplies the actual air time for most shows). This
+// deliberately does NOT guess a time of day — it marks the episode available
+// from the start of its air date in Eastern time, since assuming everything
+// airs at some fixed hour (e.g. 9pm) is wrong for most shows.
+function episodeAirDateTimeFallback(dateOnlyStr) {
+  if (!dateOnlyStr) return null;
+  return easternTimeToUTC(dateOnlyStr, 0, 0).toISOString();
+}
+
 function hasAired(isoDate) {
   if (!isoDate) return false;
   return new Date(isoDate) <= new Date();
@@ -48,6 +67,10 @@ function fmtShort(isoDate) {
 
 function fmtMed(isoDate) {
   return new Date(isoDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function fmtTimeET(isoDate) {
+  return new Date(isoDate).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET";
 }
 
 // ---- Persistence ----
