@@ -708,7 +708,7 @@ async function renderShowInfo(result) {
       infoShowCache = await fetchFullShow(result.id, { includeCast: true });
       infoSeasonNum = currentSeason(infoShowCache).seasonNumber;
     } catch (err) {
-      el.innerHTML = `${backBtn}<div class="search-error">Couldn't load info for this show. Try again.</div>`;
+      el.innerHTML = `${backBtn}<div class="search-error">Couldn't load info for this show.<br><span style="color: var(--text-muted); font-size: 12px;">${escapeHtml(err.message || "Unknown error")}</span></div>`;
       document.getElementById("info-back").addEventListener("click", closeShowInfo);
       return;
     }
