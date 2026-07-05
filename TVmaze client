@@ -5,15 +5,25 @@
 // We match shows by IMDb ID (via TMDB's external_ids) rather than by name,
 // since fuzzy title matching is unreliable for common show names.
 
+async function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchTVMazeEpisodeTimes(imdbId) {
   if (!imdbId) return null;
   try {
-    const showRes = await fetch(`https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(imdbId)}`);
+    const showRes = await fetchWithTimeout(`https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(imdbId)}`, 6000);
     if (!showRes.ok) return null; // no TVMaze match for this show
     const show = await showRes.json();
     if (!show || !show.id) return null;
 
-    const episodesRes = await fetch(`https://api.tvmaze.com/shows/${show.id}/episodes`);
+    const episodesRes = await fetchWithTimeout(`https://api.tvmaze.com/shows/${show.id}/episodes`, 6000);
     if (!episodesRes.ok) return null;
     const episodes = await episodesRes.json();
 
@@ -25,8 +35,8 @@ async function fetchTVMazeEpisodeTimes(imdbId) {
     });
     return map;
   } catch (err) {
-    // Network failure, CORS issue, or malformed response — treat as "no data",
-    // never let this block adding/tracking the show.
+    // Network failure, timeout, CORS issue, or malformed response — treat as
+    // "no data", never let this block adding/tracking the show.
     return null;
   }
 }
