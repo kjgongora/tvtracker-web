@@ -3,12 +3,44 @@ const TMDB_IMG = "https://image.tmdb.org/t/p";
 async function fetchTmdb(path, params) {
   const qs = new URLSearchParams(params || {});
   qs.set("path", path);
-  const res = await fetch(`/.netlify/functions/tmdb?${qs.toString()}`);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  let res;
+  try {
+    res = await fetch(`/.netlify/functions/tmdb?${qs.toString()}`, { signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error(`Timed out reaching TMDB (${path})`);
+    throw new Error(`Network error reaching TMDB (${path}): ${err.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
   const data = await res.json().catch(() => null);
+  if (res.status === 429) {
+    throw new Error("TMDB is rate-limiting requests right now — wait a moment and try again.");
+  }
   if (!res.ok || !data || data.error) {
-    throw new Error((data && data.error) || `TMDB request failed (${res.status})`);
+    throw new Error((data && data.error) || `TMDB request failed (${res.status}) for ${path}`);
   }
   return data;
+}
+
+// Runs async tasks with at most `limit` in flight at once, instead of firing
+// everything in parallel — avoids bursting past TMDB's rate limit when a show
+// has many seasons.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  }
+  const workers = Array.from({ length: Math.min(limit, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
 }
 
 async function searchTmdbShows(query) {
@@ -32,8 +64,9 @@ async function fetchFullShow(tmdbId, options) {
     .map(s => s.season_number)
     .filter(n => n > 0); // skip "Specials" (season 0)
 
-  const seasonPayloads = await Promise.all(
-    seasonNumbers.map(n => fetchTmdb(`/tv/${tmdbId}/season/${n}`).catch(() => null))
+  const seasonPayloads = await mapWithConcurrency(
+    seasonNumbers, 4,
+    n => fetchTmdb(`/tv/${tmdbId}/season/${n}`).catch(() => null)
   );
 
   const seasons = seasonPayloads
