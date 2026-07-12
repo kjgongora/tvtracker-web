@@ -74,7 +74,10 @@ async function fetchFullShow(tmdbId, options) {
     .map(sd => ({
       seasonNumber: sd.season_number,
       episodes: (sd.episodes || []).map(e => {
-        const realAirstamp = tvMazeTimes && tvMazeTimes[`${sd.season_number}-${e.episode_number}`];
+        const realAirstamp = tvMazeTimes && (
+          tvMazeTimes.byNumber[`${sd.season_number}-${e.episode_number}`] ||
+          (e.air_date && tvMazeTimes.byDate[e.air_date])
+        );
         return {
           id: `tmdb${tmdbId}s${sd.season_number}e${e.episode_number}`,
           episodeNumber: e.episode_number,
@@ -82,7 +85,8 @@ async function fetchFullShow(tmdbId, options) {
           airDate: realAirstamp ? new Date(realAirstamp).toISOString() : episodeAirDateTimeFallback(e.air_date),
           airTimeKnown: !!realAirstamp,
           watched: false,
-          overview: e.overview || ""
+          overview: e.overview || "",
+          stillPath: e.still_path || null
         };
       })
     }))
