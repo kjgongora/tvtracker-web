@@ -109,7 +109,12 @@ function loadShows() {
 }
 
 function saveShows(shows) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(shows));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(shows));
+  } catch (err) {
+    console.error("Couldn't save shows to localStorage:", err);
+    if (typeof showToast === "function") showToast("Couldn't save — device storage may be full");
+  }
 }
 
 function loadSettings() {
@@ -128,5 +133,10 @@ function loadSettings() {
 }
 
 function saveSettings(settings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch (err) {
+    console.error("Couldn't save settings to localStorage:", err);
+    if (typeof showToast === "function") showToast("Couldn't save — device storage may be full");
+  }
 }
