@@ -17,7 +17,10 @@ const ICONS = {
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4" stroke-linecap="round"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M20 20l-5-5" stroke-linecap="round"/></svg>',
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 16V4M7 9l5-5 5 5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3" stroke-linecap="round"/></svg>',
-  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4v12M7 11l5 5 5-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 20h16" stroke-linecap="round"/></svg>'
+  download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4v12M7 11l5 5 5-5" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 20h16" stroke-linecap="round"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12a8 8 0 0114-5.3M20 12a8 8 0 01-14 5.3" stroke-linecap="round"/><path d="M18 3v4h-4M6 21v-4h4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  list: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13" stroke-linecap="round"/><circle cx="3.5" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="3.5" cy="18" r="1.3" fill="currentColor" stroke="none"/></svg>',
+  grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3.5" y="3.5" width="7" height="7" rx="1.3"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.3"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.3"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.3"/></svg>'
 };
 
 const POSTER_ICONS = {
@@ -73,6 +76,26 @@ function fmtTimeET(isoDate) {
   return new Date(isoDate).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }) + " ET";
 }
 
+function fmtRelative(isoDate) {
+  const now = Date.now();
+  const then = new Date(isoDate).getTime();
+  const diffMs = now - then;
+  const diffHrs = diffMs / (1000 * 60 * 60);
+  const diffDays = Math.floor(diffHrs / 24);
+  if (diffHrs < 1) return "Just aired";
+  if (diffHrs < 24) return `Aired ${Math.floor(diffHrs)}h ago`;
+  if (diffDays === 1) return "Aired yesterday";
+  if (diffDays < 7) return `Aired ${diffDays}d ago`;
+  if (diffDays < 30) return `Aired ${Math.floor(diffDays / 7)}w ago`;
+  return `Aired ${Math.floor(diffDays / 30)}mo ago`;
+}
+
+function isRecentlyAired(isoDate) {
+  if (!isoDate) return false;
+  const diffHrs = (Date.now() - new Date(isoDate).getTime()) / (1000 * 60 * 60);
+  return diffHrs >= 0 && diffHrs < 48;
+}
+
 // ---- Persistence ----
 const STORAGE_KEY = "tvtracker_shows_v2";
 const SETTINGS_KEY = "tvtracker_settings_v1";
@@ -99,6 +122,7 @@ function loadSettings() {
     notifySeasonPremiere: true,
     notifySeasonFinale: false,
     notifyShowReturning: true,
+    watchingViewMode: "grid",
     lastBackup: null
   };
 }
