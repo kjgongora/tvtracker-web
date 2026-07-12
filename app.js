@@ -148,7 +148,7 @@ function openEpisodeSheet(show, season, episode, onDone) {
 
   const toggleBtn = document.getElementById("ep-sheet-toggle");
   if (toggleBtn) toggleBtn.addEventListener("click", () => {
-    setEpisodeWatched(episode, !episode.watched);
+    setEpisodeWatched(episode, !episode.watched, show);
     persist();
     closeSheet();
     if (onDone) onDone();
@@ -158,7 +158,7 @@ function openEpisodeSheet(show, season, episode, onDone) {
   if (prevBtn) prevBtn.addEventListener("click", () => {
     for (const e of season.episodes) {
       if (e.episodeNumber === episode.episodeNumber) break;
-      if (hasAired(e.airDate)) setEpisodeWatched(e, true);
+      if (hasAired(e.airDate)) setEpisodeWatched(e, true, show);
     }
     persist();
     closeSheet();
@@ -228,9 +228,12 @@ function hasAnyWatchedEpisode(show) {
 
 // Sets watched state and records when, so "Paused" (no activity in 30 days)
 // can be computed later. Always use this instead of setting ep.watched directly.
-function setEpisodeWatched(ep, watched) {
+// Pass `show` when available so marking something watched also clears a
+// manual pause — every call site that has the show in scope should pass it.
+function setEpisodeWatched(ep, watched, show) {
   ep.watched = watched;
   ep.watchedDate = watched ? new Date().toISOString() : null;
+  if (watched && show) show.manuallyPaused = false;
 }
 
 function mostRecentWatchedDate(show) {
@@ -439,8 +442,7 @@ function markNextEpisodeWatchedFromList(showId) {
   if (!show) return;
   const active = activeSeasonAndEpisode(show);
   if (!active) return;
-  setEpisodeWatched(active.episode, true);
-  show.manuallyPaused = false; // watching something un-pauses the show
+  setEpisodeWatched(active.episode, true, show);
   persist();
   showToast(`${show.title} S${active.season.seasonNumber}E${active.episode.episodeNumber} marked watched`);
   renderWatching();
@@ -638,7 +640,7 @@ function openShowActionSheet(show, onChange) {
 // time around — while preserving every episode's watched state and date,
 // matched by episode ID (which is stable across fetches).
 async function refreshShowData(show) {
-  const fresh = await fetchFullShow(show.tmdbId, { includeCast: !!(show.cast && show.cast.length) });
+  const fresh = await fetchFullShow(show.tmdbId, { includeCast: true });
 
   const watchedById = {};
   show.seasons.forEach(season => season.episodes.forEach(ep => {
@@ -702,7 +704,7 @@ function openCardQuickActions(showId) {
     buttons.push({
       label: `Mark S${active.season.seasonNumber}E${active.episode.episodeNumber} watched`,
       action: () => {
-        setEpisodeWatched(active.episode, true);
+        setEpisodeWatched(active.episode, true, show);
         persist();
         showToast(`${show.title} S${active.season.seasonNumber}E${active.episode.episodeNumber} marked watched`);
         renderActive();
@@ -780,7 +782,7 @@ function renderDetail() {
           ${ep.watched ? ICONS.check : ICONS.circle}
         </button>
         <div class="episode-info">
-          <p class="episode-title${ep.watched ? " watched" : ""}">Episode ${ep.episodeNumber} &middot; ${ep.title}</p>
+          <p class="episode-title${ep.watched ? " watched" : ""}">Episode ${ep.episodeNumber} &middot; ${escapeHtml(ep.title)}</p>
           <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) + (ep.airTimeKnown ? " at " + fmtTimeET(ep.airDate) : "") : "Air date TBA")}</p>
         </div>
       </div>`;
@@ -808,7 +810,7 @@ function renderDetail() {
   const markBtn = document.getElementById("mark-season-btn");
   if (markBtn && !markBtn.disabled) {
     markBtn.addEventListener("click", () => {
-      season.episodes.forEach(e => { if (hasAired(e.airDate)) setEpisodeWatched(e, true); });
+      season.episodes.forEach(e => { if (hasAired(e.airDate)) setEpisodeWatched(e, true, show); });
       persist();
       renderDetail();
     });
@@ -819,7 +821,7 @@ function renderDetail() {
       e.stopPropagation();
       const n = parseInt(btn.getAttribute("data-n"));
       const ep = season.episodes.find(x => x.episodeNumber === n);
-      setEpisodeWatched(ep, !ep.watched);
+      setEpisodeWatched(ep, !ep.watched, show);
       persist();
       renderDetail();
     });
@@ -1031,7 +1033,11 @@ async function addShowFromTmdb(result, mode) {
 
   let fullShow;
   try {
-    fullShow = await fetchFullShow(result.id);
+    // If the person just previewed this exact show on the info screen, reuse
+    // that fetch instead of hitting TMDB + TVMaze again for the same data.
+    fullShow = (infoShowCache && infoShowCache.tmdbId === result.id)
+      ? infoShowCache
+      : await fetchFullShow(result.id);
   } catch (err) {
     showToast("Couldn't add that show. Try again.");
     return null;
@@ -1044,7 +1050,7 @@ async function addShowFromTmdb(result, mode) {
 
   if (mode === "caughtUp") {
     fullShow.seasons.forEach(season => season.episodes.forEach(ep => {
-      if (hasAired(ep.airDate)) setEpisodeWatched(ep, true);
+      if (hasAired(ep.airDate)) setEpisodeWatched(ep, true, fullShow);
     }));
   }
   fullShow.isPinned = false;
@@ -1192,7 +1198,7 @@ function handleInfoEpisodeToggle(previewShow, seasonNumber, episode) {
   if (!wasTracked) showToast(`${tracked.title} added to your shows`);
   const season = tracked.seasons.find(s => s.seasonNumber === seasonNumber);
   const ep = season.episodes.find(e => e.episodeNumber === episode.episodeNumber);
-  setEpisodeWatched(ep, !ep.watched);
+  setEpisodeWatched(ep, !ep.watched, tracked);
   persist();
   infoShowCache = null; // force a clean re-fetch next time info is opened
   openDetail(tracked.id);
