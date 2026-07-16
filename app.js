@@ -27,6 +27,7 @@ function ensureShowTracked(show, defaultState) {
   if (existing) return existing;
   show.isPinned = false;
   show.state = defaultState || "watching";
+  show.dateAdded = show.dateAdded || new Date().toISOString();
   shows.push(show);
   persist();
   return show;
@@ -247,12 +248,30 @@ function mostRecentWatchedDate(show) {
   return latest;
 }
 
+function daysSince(dateStr) {
+  // Missing dateAdded means this show predates this feature — treat as "long
+  // ago" so existing Not Started shows don't unexpectedly jump back into
+  // Watching after this update ships.
+  if (!dateStr) return Infinity;
+  return (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24);
+}
+
+// A show with progress is "paused" after 30 days of no new episodes watched,
+// or if manually paused via the Pause action.
 function isPaused(show) {
   if (show.manuallyPaused) return true;
   const latest = mostRecentWatchedDate(show);
-  if (!latest) return false; // never watched anything = Not Started, not Paused
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  return latest < thirtyDaysAgo;
+  if (!latest) return false; // never watched — handled by isNotStarted, not here
+  return daysSince(latest.toISOString()) >= 30;
+}
+
+// A never-watched show only counts as "Not Started" once a month has passed
+// since it was added with zero engagement — until then it sits in Watching
+// like anything else, so a fresh add isn't immediately buried in a cold section.
+function isNotStarted(show) {
+  if (hasAnyWatchedEpisode(show)) return false;
+  if (show.manuallyPaused) return false; // manual pause always wins, shown in Paused instead
+  return daysSince(show.dateAdded) >= 30;
 }
 
 function renderWatching() {
@@ -262,10 +281,10 @@ function renderWatching() {
     .map(s => ({ show: s, active: activeSeasonAndEpisode(s) }))
     .filter(entry => entry.active); // hide shows with nothing new to watch yet
 
-  const notStarted = eligible.filter(e => !hasAnyWatchedEpisode(e.show));
-  const withProgress = eligible.filter(e => hasAnyWatchedEpisode(e.show));
-  const paused = withProgress.filter(e => isPaused(e.show));
-  const inProgress = withProgress.filter(e => !isPaused(e.show));
+  const notStarted = eligible.filter(e => isNotStarted(e.show));
+  const remaining = eligible.filter(e => !isNotStarted(e.show));
+  const paused = remaining.filter(e => e.show.manuallyPaused || (hasAnyWatchedEpisode(e.show) && isPaused(e.show)));
+  const inProgress = remaining.filter(e => !paused.includes(e));
 
   // Pinned first, then by the air date of the waiting episode — most recent first
   const byRecency = (a, b) =>
@@ -1055,6 +1074,7 @@ async function addShowFromTmdb(result, mode) {
   }
   fullShow.isPinned = false;
   fullShow.state = mode === "watchlist" ? "notStarted" : "watching";
+  fullShow.dateAdded = new Date().toISOString();
 
   // The show is fully saved as of here — everything below is display only.
   shows = shows.filter(s => s.id !== fullShow.id);
