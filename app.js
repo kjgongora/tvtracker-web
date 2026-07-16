@@ -827,7 +827,7 @@ function renderDetail() {
   });
 
   const markBtn = document.getElementById("mark-season-btn");
-  if (markBtn && !markBtn.disabled) {
+  if (markBtn) {
     markBtn.addEventListener("click", () => {
       season.episodes.forEach(e => { if (hasAired(e.airDate)) setEpisodeWatched(e, true, show); });
       persist();
@@ -842,7 +842,8 @@ function renderDetail() {
       const ep = season.episodes.find(x => x.episodeNumber === n);
       setEpisodeWatched(ep, !ep.watched, show);
       persist();
-      renderDetail();
+      updateEpisodeToggleInPlace(btn, ep);
+      updateSeasonHeaderInPlace(season);
     });
   });
 
@@ -853,6 +854,30 @@ function renderDetail() {
       openEpisodeSheet(show, season, ep, renderDetail);
     });
   });
+}
+
+// Updates a single episode's toggle button and title in place, instead of
+// rebuilding the whole episode list — avoids replacing the exact button the
+// person just clicked mid-interaction, which was a real source of the
+// checkmark not reliably appearing.
+function updateEpisodeToggleInPlace(btn, ep) {
+  btn.classList.toggle("watched", ep.watched);
+  btn.classList.toggle("unwatched", !ep.watched);
+  btn.innerHTML = ep.watched ? ICONS.check : ICONS.circle;
+  const row = btn.closest(".episode-row");
+  const title = row && row.querySelector(".episode-title");
+  if (title) title.classList.toggle("watched", ep.watched);
+}
+
+function updateSeasonHeaderInPlace(season) {
+  const p = seasonProgress(season);
+  const countEl = document.querySelector(".season-actions span");
+  if (countEl) countEl.textContent = `${p.watched}/${p.total} watched`;
+  const markBtn = document.getElementById("mark-season-btn");
+  if (markBtn) {
+    markBtn.disabled = p.watched === p.total;
+    markBtn.textContent = p.watched === p.total ? "Season complete" : "Mark season watched";
+  }
 }
 
 // ---- Upcoming screen ----
@@ -1220,8 +1245,10 @@ function handleInfoEpisodeToggle(previewShow, seasonNumber, episode) {
   const ep = season.episodes.find(e => e.episodeNumber === episode.episodeNumber);
   setEpisodeWatched(ep, !ep.watched, tracked);
   persist();
-  infoShowCache = null; // force a clean re-fetch next time info is opened
-  openDetail(tracked.id);
+  // `tracked` and `infoShowCache` are the same object when this is a fresh
+  // add, so re-rendering the current screen (rather than navigating to the
+  // full detail view) correctly shows the checkmark change in place.
+  renderShowInfo({ id: tracked.tmdbId });
 }
 
 function openInfoEpisodeSheet(previewShow, season, episode) {
