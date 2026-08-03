@@ -460,17 +460,11 @@ function watchingSection(label, entries, variant) {
   let html = `<div class="section-label">${label}</div><div class="poster-grid">`;
   entries.forEach(({ show, active }) => {
     const p = seasonProgress(active.season);
-    const sortedEps = [...active.season.episodes].sort((a, b) => a.episodeNumber - b.episodeNumber);
-    const isPremiere = active.episode.episodeNumber === 1;
-    const isFinale = active.episode.episodeNumber === sortedEps[sortedEps.length - 1].episodeNumber;
-    const isNew = isRecentlyAired(active.episode.airDate) && !isPremiere && !isFinale;
     html += `
       <button class="poster-card${variant === "paused" ? " poster-paused" : ""}" data-id="${show.id}">
         <div class="poster-art">
           ${posterMarkup(show, "w342")}
           ${show.isPinned ? `<div class="poster-pin">${ICONS.pin}</div>` : ""}
-          ${isNew ? `<div class="poster-new-dot" title="Aired in the last 48 hours"></div>` : ""}
-          ${isPremiere ? `<div class="poster-flag premiere">Premiere</div>` : isFinale ? `<div class="poster-flag finale">Finale</div>` : ""}
           <div class="poster-ep-badge">S${active.season.seasonNumber}E${active.episode.episodeNumber}</div>
           <div class="poster-progress"><div class="poster-progress-fill" style="width:${p.pct}%"></div></div>
         </div>
