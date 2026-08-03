@@ -14,6 +14,21 @@ let addingShowId = null;
 let infoShowCache = null; // full fetched show data for the currently open info screen
 let infoSeasonNum = null;
 
+// One-time cleanup: cast data was previously persisted on tracked shows even
+// though it's never displayed there (only on the untracked preview screen).
+// Strip it immediately on load so existing users get the storage savings
+// right away, instead of needing to refresh every show one at a time.
+(function cleanupLegacyCastData() {
+  let changed = false;
+  shows.forEach(show => {
+    if (show.cast) {
+      delete show.cast;
+      changed = true;
+    }
+  });
+  if (changed) saveShows(shows);
+})();
+
 // ---- Derived helpers ----
 function findShow(id) {
   return shows.find(s => s.id === id);
@@ -28,6 +43,7 @@ function ensureShowTracked(show, defaultState) {
   show.isPinned = false;
   show.state = defaultState || "watching";
   show.dateAdded = show.dateAdded || new Date().toISOString();
+  delete show.cast; // only ever shown on the untracked preview screen - dead weight once tracked
   shows.push(show);
   persist();
   return show;
@@ -643,7 +659,11 @@ function openShowActionSheet(show, onChange) {
 }
 
 async function refreshShowData(show) {
-  const fresh = await fetchFullShow(show.tmdbId, { includeCast: true });
+  // No longer requesting cast here - it's never displayed on a tracked show's
+  // detail screen, only on the untracked preview, so fetching and storing it
+  // was pure waste. `delete` below also cleans up any already-persisted cast
+  // data from before this fix, shrinking storage for shows added earlier.
+  const fresh = await fetchFullShow(show.tmdbId, { includeCast: false });
 
   const watchedById = {};
   show.seasons.forEach(season => season.episodes.forEach(ep => {
@@ -662,7 +682,7 @@ async function refreshShowData(show) {
   show.status = fresh.status;
   show.network = fresh.network;
   show.posterPath = fresh.posterPath;
-  if (fresh.cast && fresh.cast.length) show.cast = fresh.cast;
+  delete show.cast;
   persist();
 }
 
@@ -1071,6 +1091,7 @@ async function addShowFromTmdb(result, mode) {
   fullShow.isPinned = false;
   fullShow.state = mode === "watchlist" ? "notStarted" : "watching";
   fullShow.dateAdded = new Date().toISOString();
+  delete fullShow.cast; // only shown on the untracked preview screen - dead weight once tracked
 
   shows = shows.filter(s => s.id !== fullShow.id);
   shows.push(fullShow);
