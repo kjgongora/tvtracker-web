@@ -35,8 +35,6 @@ function ensureShowTracked(show, defaultState) {
 
 function currentSeason(show) {
   const sorted = [...show.seasons].sort((a, b) => b.seasonNumber - a.seasonNumber);
-  // A show should always have at least one season by the time it's added, but
-  // guard anyway — a data hiccup here shouldn't crash whatever screen renders next.
   return sorted[0] || { seasonNumber: 0, episodes: [] };
 }
 
@@ -46,9 +44,6 @@ function seasonProgress(season) {
   return { watched, total, pct: total ? Math.round((watched / total) * 100) : 0 };
 }
 
-// Finds the earliest season (in air order) that still has an aired, unwatched
-// episode waiting — i.e. where the person actually has something new to watch.
-// Returns null if every aired episode across every season has been watched.
 function activeSeasonAndEpisode(show) {
   const sorted = [...show.seasons].sort((a, b) => a.seasonNumber - b.seasonNumber);
   for (const season of sorted) {
@@ -58,8 +53,6 @@ function activeSeasonAndEpisode(show) {
   return null;
 }
 
-// The season to default to when opening a show or showing its card: wherever
-// the person needs to catch up, falling back to the latest season if caught up.
 function defaultSeasonFor(show) {
   const active = activeSeasonAndEpisode(show);
   return active ? active.season : currentSeason(show);
@@ -110,8 +103,6 @@ function closeSheet() {
   if (existing) existing.remove();
 }
 
-// Rich episode detail sheet: air date, synopsis, and (if aired) watch actions.
-// onDone is called after any state change so the calling screen can re-render.
 function openEpisodeSheet(show, season, episode, onDone) {
   closeSheet();
   const aired = hasAired(episode.airDate);
@@ -230,11 +221,15 @@ function hasAnyWatchedEpisode(show) {
 // Sets watched state and records when, so "Paused" (no activity in 30 days)
 // can be computed later. Always use this instead of setting ep.watched directly.
 // Pass `show` when available so marking something watched also clears a
-// manual pause — every call site that has the show in scope should pass it.
+// manual pause and promotes a Watchlist show to actively Watching — every
+// call site that has the show in scope should pass it.
 function setEpisodeWatched(ep, watched, show) {
   ep.watched = watched;
   ep.watchedDate = watched ? new Date().toISOString() : null;
-  if (watched && show) show.manuallyPaused = false;
+  if (watched && show) {
+    show.manuallyPaused = false;
+    if (show.state === "notStarted") show.state = "watching";
+  }
 }
 
 function mostRecentWatchedDate(show) {
@@ -249,35 +244,32 @@ function mostRecentWatchedDate(show) {
 }
 
 function daysSince(dateStr) {
-  // Missing dateAdded means this show predates this feature — treat as "long
-  // ago" so existing Not Started shows don't unexpectedly jump back into
-  // Watching after this update ships.
   if (!dateStr) return Infinity;
   return (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24);
 }
 
-// A show with progress is "paused" after 30 days of no new episodes watched,
-// or if manually paused via the Pause action.
 function isPaused(show) {
   if (show.manuallyPaused) return true;
   const latest = mostRecentWatchedDate(show);
-  if (!latest) return false; // never watched — handled by isNotStarted, not here
+  if (!latest) return false;
   return daysSince(latest.toISOString()) >= 30;
 }
 
-// A never-watched show only counts as "Not Started" once a month has passed
-// since it was added with zero engagement — until then it sits in Watching
-// like anything else, so a fresh add isn't immediately buried in a cold section.
+// A never-watched show counts as "Not Started" either because it's an
+// explicit Watchlist add (state === "notStarted" — no need to wait, choosing
+// "watchlist only" already is the signal), or because a month has passed
+// since it was added as Watching with zero engagement.
 function isNotStarted(show) {
   if (hasAnyWatchedEpisode(show)) return false;
-  if (show.manuallyPaused) return false; // manual pause always wins, shown in Paused instead
+  if (show.state === "notStarted") return true;
+  if (show.manuallyPaused) return false;
   return daysSince(show.dateAdded) >= 30;
 }
 
 function renderWatching() {
   const el = document.getElementById("screen-watching");
   const eligible = shows
-    .filter(s => s.state === "watching")
+    .filter(s => s.state === "watching" || s.state === "notStarted")
     .map(s => ({ show: s, active: activeSeasonAndEpisode(s) }))
     .filter(entry => entry.active); // hide shows with nothing new to watch yet
 
@@ -286,7 +278,6 @@ function renderWatching() {
   const paused = remaining.filter(e => e.show.manuallyPaused || (hasAnyWatchedEpisode(e.show) && isPaused(e.show)));
   const inProgress = remaining.filter(e => !paused.includes(e));
 
-  // Pinned first, then by the air date of the waiting episode — most recent first
   const byRecency = (a, b) =>
     (b.show.isPinned - a.show.isPinned) ||
     (new Date(b.active.episode.airDate) - new Date(a.active.episode.airDate));
@@ -366,9 +357,6 @@ function watchingListSection(label, entries) {
   return html;
 }
 
-// TV Time-style swipeable row: drag right past the threshold to mark the
-// waiting episode watched; drag left to reveal Pause / Stop actions for the
-// show. Uses pointer events so it works the same for touch and mouse.
 function wireSwipeableRow(row) {
   const content = row.querySelector(".watch-list-content");
   const ACTION_WIDTH = 132;
@@ -426,8 +414,8 @@ function wireSwipeableRow(row) {
   content.addEventListener("pointercancel", endDrag);
 
   content.addEventListener("click", () => {
-    if (settledX !== 0) { settledX = 0; setX(0, true); return; } // tap to close if open
-    if (didDrag) return; // aborted swipe that snapped back — not a real tap
+    if (settledX !== 0) { settledX = 0; setX(0, true); return; }
+    if (didDrag) return;
     const show = findShow(row.getAttribute("data-show-id"));
     if (!show) return;
     const active = activeSeasonAndEpisode(show);
@@ -530,12 +518,15 @@ function renderLibrary() {
 
   const readyToWatch = [];
   const caughtUp = [];
+  const notStarted = [];
   const watchlist = [];
   filtered.forEach(show => {
     if (show.state === "notStarted") {
       watchlist.push(show);
     } else if (activeSeasonAndEpisode(show)) {
       readyToWatch.push(show);
+    } else if (!hasAnyWatchedEpisode(show)) {
+      notStarted.push(show);
     } else {
       caughtUp.push(show);
     }
@@ -544,6 +535,7 @@ function renderLibrary() {
   const byTitle = (a, b) => (b.isPinned - a.isPinned) || a.title.localeCompare(b.title);
   readyToWatch.sort(byTitle);
   caughtUp.sort(byTitle);
+  notStarted.sort(byTitle);
   watchlist.sort(byTitle);
 
   let html = `<h1 class="page-title">Library</h1>
@@ -551,11 +543,12 @@ function renderLibrary() {
       <input type="text" class="search-input" id="library-filter" placeholder="Filter your shows" value="${escapeHtml(libraryFilter)}">
     </div>`;
 
-  if (readyToWatch.length === 0 && caughtUp.length === 0 && watchlist.length === 0) {
+  if (readyToWatch.length === 0 && caughtUp.length === 0 && notStarted.length === 0 && watchlist.length === 0) {
     html += emptyState(ICONS.search, "No matches", `No shows in your library match "${escapeHtml(libraryFilter)}".`);
   } else {
     html += librarySection(null, readyToWatch);
     html += librarySection("Caught up", caughtUp);
+    html += librarySection("Not Started", notStarted);
     html += librarySection("Watchlist", watchlist);
   }
   el.innerHTML = html;
@@ -595,9 +588,13 @@ function librarySection(label, list) {
       status = "Not started";
     } else {
       const active = activeSeasonAndEpisode(show);
-      status = active
-        ? `S${active.season.seasonNumber}E${active.episode.episodeNumber} ready`
-        : `Caught up &middot; S${currentSeason(show).seasonNumber}`;
+      if (active) {
+        status = `S${active.season.seasonNumber}E${active.episode.episodeNumber} ready`;
+      } else if (!hasAnyWatchedEpisode(show)) {
+        status = "Not started";
+      } else {
+        status = `Caught up &middot; S${currentSeason(show).seasonNumber}`;
+      }
     }
     const progress = showOverallProgress(show);
     html += `
@@ -614,9 +611,6 @@ function librarySection(label, list) {
   return html;
 }
 
-// Shared "pin / move / stop watching" sheet for a show.
-// onChange(wasRemoved) is called after any action so the caller can decide
-// how to update the screen — re-render in place, or navigate back if removed.
 function openShowActionSheet(show, onChange) {
   const buttons = [
     { label: show.isPinned ? "Unpin" : "Pin to top", action: () => { show.isPinned = !show.isPinned; persist(); onChange(false); } }
@@ -654,10 +648,6 @@ function openShowActionSheet(show, onChange) {
   openSheet(show.title, buttons);
 }
 
-// Re-fetches a show's season/episode data from TMDB + TVMaze — picking up
-// corrected air times, new episodes, or a TVMaze match that failed the first
-// time around — while preserving every episode's watched state and date,
-// matched by episode ID (which is stable across fetches).
 async function refreshShowData(show) {
   const fresh = await fetchFullShow(show.tmdbId, { includeCast: true });
 
@@ -682,8 +672,6 @@ async function refreshShowData(show) {
   persist();
 }
 
-// Tap opens the show; a ~500ms press-and-hold instead opens a quick-actions
-// sheet (mark next episode watched, pin/unpin) without leaving the screen.
 function wireCardTapAndLongPress(card) {
   let pressTimer = null;
   let longPressed = false;
@@ -744,8 +732,6 @@ function posterMarkup(show, size) {
   return iconFor(show.icon);
 }
 
-// Prefers the actual episode still (a real screenshot from that episode,
-// from TMDB), falling back to the show's poster, then the icon set.
 function episodeImageMarkup(show, episode, size) {
   if (episode && episode.stillPath) {
     return `<img class="episode-still-img" src="${posterUrl(episode.stillPath, size || "w300")}" alt="" loading="lazy">`;
@@ -856,10 +842,6 @@ function renderDetail() {
   });
 }
 
-// Updates a single episode's toggle button and title in place, instead of
-// rebuilding the whole episode list — avoids replacing the exact button the
-// person just clicked mid-interaction, which was a real source of the
-// checkmark not reliably appearing.
 function updateEpisodeToggleInPlace(btn, ep) {
   btn.classList.toggle("watched", ep.watched);
   btn.classList.toggle("unwatched", !ep.watched);
@@ -898,8 +880,6 @@ function renderUpcoming() {
       });
     });
   });
-  // Episodes with no announced air date yet must sort to the end, not to
-  // the epoch (new Date(null) === 1970-01-01, which is always "this week")
   items.sort((a, b) => {
     const ad = a.episode.airDate ? new Date(a.episode.airDate).getTime() : Infinity;
     const bd = b.episode.airDate ? new Date(b.episode.airDate).getTime() : Infinity;
@@ -970,7 +950,6 @@ function renderSearch() {
     <div id="search-results"></div>`;
 
   const input = document.getElementById("search-input");
-  // Move cursor to the end without re-triggering input events
   input.focus();
   const v = input.value;
   input.value = "";
@@ -997,7 +976,7 @@ function renderSearch() {
 async function performSearch(query) {
   try {
     const results = await searchTmdbShows(query);
-    if (query !== searchQuery) return; // stale response, a newer query has since fired
+    if (query !== searchQuery) return;
     searchResults = results;
     searchError = null;
   } catch (err) {
@@ -1077,8 +1056,6 @@ async function addShowFromTmdb(result, mode) {
 
   let fullShow;
   try {
-    // If the person just previewed this exact show on the info screen, reuse
-    // that fetch instead of hitting TMDB + TVMaze again for the same data.
     fullShow = (infoShowCache && infoShowCache.tmdbId === result.id)
       ? infoShowCache
       : await fetchFullShow(result.id);
@@ -1101,7 +1078,6 @@ async function addShowFromTmdb(result, mode) {
   fullShow.state = mode === "watchlist" ? "notStarted" : "watching";
   fullShow.dateAdded = new Date().toISOString();
 
-  // The show is fully saved as of here — everything below is display only.
   shows = shows.filter(s => s.id !== fullShow.id);
   shows.push(fullShow);
   persist();
@@ -1111,8 +1087,6 @@ async function addShowFromTmdb(result, mode) {
   try {
     setActiveTab(mode === "watchlist" ? "library" : "watching");
   } catch (renderErr) {
-    // The add already succeeded — a display hiccup here must never be
-    // reported to the person as "couldn't add that show".
     console.error("Render after add failed:", renderErr);
   }
 
@@ -1123,7 +1097,6 @@ async function renderShowInfo(result) {
   const el = document.getElementById("screen-show-info");
   const backBtn = `<div class="detail-topbar"><button class="back-btn" id="info-back">${ICONS.chevronLeft}Back</button></div>`;
 
-  // Re-fetch only if this is a different show than whatever's cached
   if (!infoShowCache || infoShowCache.tmdbId !== result.id) {
     el.innerHTML = `${backBtn}<div class="search-loading">Loading show info&hellip;</div>`;
     document.getElementById("info-back").addEventListener("click", closeShowInfo);
@@ -1167,8 +1140,6 @@ async function renderShowInfo(result) {
   html += `<div class="episode-list">`;
   season.episodes.forEach(ep => {
     const aired = hasAired(ep.airDate);
-    // Reflect real watched state if this show is already tracked, since
-    // infoShowCache itself never carries watched progress.
     const watched = tracked
       ? !!(tracked.seasons.find(s => s.seasonNumber === season.seasonNumber) || {}).episodes
           ?.find(e => e.episodeNumber === ep.episodeNumber)?.watched
@@ -1234,9 +1205,6 @@ async function renderShowInfo(result) {
   }
 }
 
-// Marking an episode watched from the info/preview screen means the person
-// wants to actually track this show — so add it first if it isn't tracked
-// yet, then apply the toggle, then hand off to the real tracked detail view.
 function handleInfoEpisodeToggle(previewShow, seasonNumber, episode) {
   const wasTracked = !!findShow(previewShow.id);
   const tracked = ensureShowTracked(previewShow, "watching");
@@ -1245,9 +1213,6 @@ function handleInfoEpisodeToggle(previewShow, seasonNumber, episode) {
   const ep = season.episodes.find(e => e.episodeNumber === episode.episodeNumber);
   setEpisodeWatched(ep, !ep.watched, tracked);
   persist();
-  // `tracked` and `infoShowCache` are the same object when this is a fresh
-  // add, so re-rendering the current screen (rather than navigating to the
-  // full detail view) correctly shows the checkmark change in place.
   renderShowInfo({ id: tracked.tmdbId });
 }
 
@@ -1415,6 +1380,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   indicator.innerHTML = ICONS.refresh;
 
   const PULL_THRESHOLD = 70;
+  const START_ZONE_PX = 140; // gesture must start within this many px of the top of the screen
   let startY = null;
   let pulling = false;
   let refreshing = false;
@@ -1426,7 +1392,9 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   document.addEventListener("touchstart", e => {
     if (!eligibleScreen() || refreshing) return;
     if (window.scrollY > 0) return; // only trigger when already at the top
-    startY = e.touches[0].clientY;
+    const touchY = e.touches[0].clientY;
+    if (touchY > START_ZONE_PX) return; // must start near the top of the screen, not anywhere on the page
+    startY = touchY;
     pulling = true;
   }, { passive: true });
 
