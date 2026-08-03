@@ -14,17 +14,21 @@ let addingShowId = null;
 let infoShowCache = null; // full fetched show data for the currently open info screen
 let infoSeasonNum = null;
 
-// One-time cleanup: cast data was previously persisted on tracked shows even
-// though it's never displayed there (only on the untracked preview screen).
-// Strip it immediately on load so existing users get the storage savings
-// right away, instead of needing to refresh every show one at a time.
-(function cleanupLegacyCastData() {
+// One-time cleanup: cast data and full-length synopsis text on already-
+// watched episodes were previously persisted even though neither is actually
+// needed once a show is tracked / once an episode's been watched. Cleans up
+// existing data immediately on load, instead of requiring a manual refresh
+// per show.
+(function cleanupLegacyStorageBloat() {
   let changed = false;
   shows.forEach(show => {
     if (show.cast) {
       delete show.cast;
       changed = true;
     }
+    const before = JSON.stringify(show.seasons);
+    trimShowOverviews(show);
+    if (JSON.stringify(show.seasons) !== before) changed = true;
   });
   if (changed) saveShows(shows);
 })();
@@ -44,6 +48,7 @@ function ensureShowTracked(show, defaultState) {
   show.state = defaultState || "watching";
   show.dateAdded = show.dateAdded || new Date().toISOString();
   delete show.cast; // only ever shown on the untracked preview screen - dead weight once tracked
+  trimShowOverviews(show);
   shows.push(show);
   persist();
   return show;
@@ -76,6 +81,21 @@ function defaultSeasonFor(show) {
 
 function persist() {
   saveShows(shows);
+}
+
+// Episode synopsis text is the single biggest per-episode storage cost, and
+// almost all of it sits on episodes you've already watched and are unlikely
+// to revisit. Trims aggressively there, but leaves unwatched episodes at
+// full length since that detail is genuinely useful when deciding what to
+// watch next.
+function trimShowOverviews(show) {
+  show.seasons.forEach(season => season.episodes.forEach(ep => {
+    if (!ep.overview) return;
+    const limit = ep.watched ? 120 : 400;
+    if (ep.overview.length > limit) {
+      ep.overview = ep.overview.slice(0, limit).trim() + "\u2026";
+    }
+  }));
 }
 
 // ---- Toast ----
@@ -242,9 +262,14 @@ function hasAnyWatchedEpisode(show) {
 function setEpisodeWatched(ep, watched, show) {
   ep.watched = watched;
   ep.watchedDate = watched ? new Date().toISOString() : null;
-  if (watched && show) {
-    show.manuallyPaused = false;
-    if (show.state === "notStarted") show.state = "watching";
+  if (watched) {
+    if (ep.overview && ep.overview.length > 120) {
+      ep.overview = ep.overview.slice(0, 120).trim() + "\u2026";
+    }
+    if (show) {
+      show.manuallyPaused = false;
+      if (show.state === "notStarted") show.state = "watching";
+    }
   }
 }
 
@@ -683,6 +708,7 @@ async function refreshShowData(show) {
   show.network = fresh.network;
   show.posterPath = fresh.posterPath;
   delete show.cast;
+  trimShowOverviews(show);
   persist();
 }
 
@@ -1092,6 +1118,7 @@ async function addShowFromTmdb(result, mode) {
   fullShow.state = mode === "watchlist" ? "notStarted" : "watching";
   fullShow.dateAdded = new Date().toISOString();
   delete fullShow.cast; // only shown on the untracked preview screen - dead weight once tracked
+  trimShowOverviews(fullShow);
 
   shows = shows.filter(s => s.id !== fullShow.id);
   shows.push(fullShow);
