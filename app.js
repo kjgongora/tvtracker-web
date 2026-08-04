@@ -28,6 +28,7 @@ let infoSeasonNum = null;
     }
     const before = JSON.stringify(show.seasons);
     trimShowOverviews(show);
+    if (collapseFullyWatchedSeasons(show)) changed = true;
     if (JSON.stringify(show.seasons) !== before) changed = true;
   });
   if (changed) saveShows(shows);
@@ -60,6 +61,9 @@ function currentSeason(show) {
 }
 
 function seasonProgress(season) {
+  if (season.collapsed) {
+    return { watched: season.watchedCount, total: season.episodeCount, pct: 100 };
+  }
   const watched = season.episodes.filter(e => e.watched).length;
   const total = season.episodes.length;
   return { watched, total, pct: total ? Math.round((watched / total) * 100) : 0 };
@@ -68,6 +72,7 @@ function seasonProgress(season) {
 function activeSeasonAndEpisode(show) {
   const sorted = [...show.seasons].sort((a, b) => a.seasonNumber - b.seasonNumber);
   for (const season of sorted) {
+    if (season.collapsed) continue; // fully watched by definition - nothing to find here
     const episode = season.episodes.find(e => !e.watched && hasAired(e.airDate));
     if (episode) return { season, episode };
   }
@@ -89,13 +94,46 @@ function persist() {
 // full length since that detail is genuinely useful when deciding what to
 // watch next.
 function trimShowOverviews(show) {
-  show.seasons.forEach(season => season.episodes.forEach(ep => {
-    if (!ep.overview) return;
-    const limit = ep.watched ? 120 : 400;
-    if (ep.overview.length > limit) {
-      ep.overview = ep.overview.slice(0, limit).trim() + "\u2026";
+  show.seasons.forEach(season => {
+    if (season.collapsed) return;
+    season.episodes.forEach(ep => {
+      if (!ep.overview) return;
+      const limit = ep.watched ? 120 : 400;
+      if (ep.overview.length > limit) {
+        ep.overview = ep.overview.slice(0, limit).trim() + "\u2026";
+      }
+    });
+  });
+}
+
+// For a season where every episode is already watched, replace the full
+// episode-by-episode data (synopsis, air date, image, title - all of it)
+// with just a summary. This is the single biggest storage win available,
+// since a fully-completed season of a long-running show is exactly the kind
+// of data that's rarely revisited episode-by-episode again. The trade-off:
+// once collapsed, you can't open that season's individual episode list
+// anymore - only "Refresh episode data" restores full detail.
+function collapseFullyWatchedSeasons(show) {
+  let changed = false;
+  show.seasons.forEach(season => {
+    if (season.collapsed) return;
+    if (!season.episodes || season.episodes.length === 0) return;
+    if (season.episodes.every(e => e.watched)) {
+      const lastWatchedDate = season.episodes
+        .map(e => e.watchedDate)
+        .filter(Boolean)
+        .sort()
+        .pop() || null;
+      const episodeCount = season.episodes.length;
+      season.collapsed = true;
+      season.episodeCount = episodeCount;
+      season.watchedCount = episodeCount;
+      season.lastWatchedDate = lastWatchedDate;
+      delete season.episodes;
+      changed = true;
     }
-  }));
+  });
+  return changed;
 }
 
 // ---- Toast ----
@@ -251,7 +289,7 @@ function updateFirstRunHint() {
 
 // ---- Watching screen ----
 function hasAnyWatchedEpisode(show) {
-  return show.seasons.some(season => season.episodes.some(ep => ep.watched));
+  return show.seasons.some(season => season.collapsed ? season.watchedCount > 0 : season.episodes.some(ep => ep.watched));
 }
 
 // Sets watched state and records when, so "Paused" (no activity in 30 days)
@@ -269,18 +307,28 @@ function setEpisodeWatched(ep, watched, show) {
     if (show) {
       show.manuallyPaused = false;
       if (show.state === "notStarted") show.state = "watching";
+      collapseFullyWatchedSeasons(show);
     }
   }
 }
 
 function mostRecentWatchedDate(show) {
   let latest = null;
-  show.seasons.forEach(season => season.episodes.forEach(ep => {
-    if (ep.watched && ep.watchedDate) {
-      const d = new Date(ep.watchedDate);
-      if (!latest || d > latest) latest = d;
+  show.seasons.forEach(season => {
+    if (season.collapsed) {
+      if (season.lastWatchedDate) {
+        const d = new Date(season.lastWatchedDate);
+        if (!latest || d > latest) latest = d;
+      }
+      return;
     }
-  }));
+    season.episodes.forEach(ep => {
+      if (ep.watched && ep.watchedDate) {
+        const d = new Date(ep.watchedDate);
+        if (!latest || d > latest) latest = d;
+      }
+    });
+  });
   return latest;
 }
 
@@ -523,10 +571,17 @@ function emptyState(icon, title, body) {
 
 function showOverallProgress(show) {
   let watched = 0, total = 0;
-  show.seasons.forEach(season => season.episodes.forEach(ep => {
-    total++;
-    if (ep.watched) watched++;
-  }));
+  show.seasons.forEach(season => {
+    if (season.collapsed) {
+      watched += season.watchedCount;
+      total += season.episodeCount;
+      return;
+    }
+    season.episodes.forEach(ep => {
+      total++;
+      if (ep.watched) watched++;
+    });
+  });
   return { watched, total, pct: total ? Math.round((watched / total) * 100) : 0 };
 }
 
@@ -691,14 +746,27 @@ async function refreshShowData(show) {
   const fresh = await fetchFullShow(show.tmdbId, { includeCast: false });
 
   const watchedById = {};
-  show.seasons.forEach(season => season.episodes.forEach(ep => {
-    if (ep.watched) watchedById[ep.id] = ep.watchedDate || null;
-  }));
+  const collapsedSeasons = {}; // seasonNumber -> prior collapsed season summary
+  show.seasons.forEach(season => {
+    if (season.collapsed) {
+      collapsedSeasons[season.seasonNumber] = season;
+      return;
+    }
+    season.episodes.forEach(ep => {
+      if (ep.watched) watchedById[ep.id] = ep.watchedDate || null;
+    });
+  });
 
   fresh.seasons.forEach(season => season.episodes.forEach(ep => {
     if (ep.id in watchedById) {
       ep.watched = true;
       ep.watchedDate = watchedById[ep.id];
+    } else if (collapsedSeasons[season.seasonNumber]) {
+      // This season was previously collapsed (fully watched). Restore that,
+      // approximating each episode's watch date from the season's last-known
+      // date, since individual dates aren't kept once collapsed.
+      ep.watched = true;
+      ep.watchedDate = collapsedSeasons[season.seasonNumber].lastWatchedDate || null;
     }
   }));
 
@@ -709,6 +777,7 @@ async function refreshShowData(show) {
   show.posterPath = fresh.posterPath;
   delete show.cast;
   trimShowOverviews(show);
+  collapseFullyWatchedSeasons(show);
   persist();
 }
 
@@ -815,24 +884,28 @@ function renderDetail() {
 
   html += `<div class="season-actions">
       <span>${p.watched}/${p.total} watched</span>
-      <button id="mark-season-btn" ${p.watched === p.total ? "disabled" : ""}>${p.watched === p.total ? "Season complete" : "Mark season watched"}</button>
+      ${season.collapsed ? "" : `<button id="mark-season-btn" ${p.watched === p.total ? "disabled" : ""}>${p.watched === p.total ? "Season complete" : "Mark season watched"}</button>`}
     </div>`;
 
-  html += `<div class="episode-list">`;
-  season.episodes.forEach(ep => {
-    const aired = hasAired(ep.airDate);
-    html += `
-      <div class="episode-row" data-n="${ep.episodeNumber}">
-        <button class="ep-toggle ${ep.watched ? "watched" : "unwatched"}${aired ? "" : " unaired"}" data-n="${ep.episodeNumber}" ${aired ? "" : "disabled"} aria-label="Toggle watched">
-          ${ep.watched ? ICONS.check : ICONS.circle}
-        </button>
-        <div class="episode-info">
-          <p class="episode-title${ep.watched ? " watched" : ""}">Episode ${ep.episodeNumber} &middot; ${escapeHtml(ep.title)}</p>
-          <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) + (ep.airTimeKnown ? " at " + fmtTimeET(ep.airDate) : "") : "Air date TBA")}</p>
-        </div>
-      </div>`;
-  });
-  html += `</div>`;
+  if (season.collapsed) {
+    html += `<div class="collapsed-season-notice">All ${season.episodeCount} episodes in this season have been watched. To save storage space, individual episode details have been cleared. Use "Refresh episode data" from the &#8942; menu above to restore them.</div>`;
+  } else {
+    html += `<div class="episode-list">`;
+    season.episodes.forEach(ep => {
+      const aired = hasAired(ep.airDate);
+      html += `
+        <div class="episode-row" data-n="${ep.episodeNumber}">
+          <button class="ep-toggle ${ep.watched ? "watched" : "unwatched"}${aired ? "" : " unaired"}" data-n="${ep.episodeNumber}" ${aired ? "" : "disabled"} aria-label="Toggle watched">
+            ${ep.watched ? ICONS.check : ICONS.circle}
+          </button>
+          <div class="episode-info">
+            <p class="episode-title${ep.watched ? " watched" : ""}">Episode ${ep.episodeNumber} &middot; ${escapeHtml(ep.title)}</p>
+            <p class="episode-date">${aired ? fmtMed(ep.airDate) : (ep.airDate ? "Airs " + fmtMed(ep.airDate) + (ep.airTimeKnown ? " at " + fmtTimeET(ep.airDate) : "") : "Air date TBA")}</p>
+          </div>
+        </div>`;
+    });
+    html += `</div>`;
+  }
 
   el.innerHTML = html;
 
@@ -868,6 +941,13 @@ function renderDetail() {
       const ep = season.episodes.find(x => x.episodeNumber === n);
       setEpisodeWatched(ep, !ep.watched, show);
       persist();
+      // Marking this episode watched may have just collapsed the whole
+      // season (if it was the last one) - the in-place update assumes the
+      // episode list still exists, so fall back to a full re-render if not.
+      if (season.collapsed) {
+        renderDetail();
+        return;
+      }
       updateEpisodeToggleInPlace(btn, ep);
       updateSeasonHeaderInPlace(season);
     });
@@ -908,6 +988,7 @@ function renderUpcoming() {
   const items = [];
   shows.forEach(show => {
     show.seasons.forEach(season => {
+      if (season.collapsed) return; // fully watched by definition - nothing unwatched to surface here
       const sorted = [...season.episodes].sort((a, b) => a.episodeNumber - b.episodeNumber);
       sorted.forEach(ep => {
         if (!ep.watched && !hasAired(ep.airDate)) {
@@ -1182,9 +1263,9 @@ async function renderShowInfo(result) {
   html += `<div class="episode-list">`;
   season.episodes.forEach(ep => {
     const aired = hasAired(ep.airDate);
-    const watched = tracked
-      ? !!(tracked.seasons.find(s => s.seasonNumber === season.seasonNumber) || {}).episodes
-          ?.find(e => e.episodeNumber === ep.episodeNumber)?.watched
+    const trackedSeason = tracked ? tracked.seasons.find(s => s.seasonNumber === season.seasonNumber) : null;
+    const watched = trackedSeason
+      ? (trackedSeason.collapsed ? true : !!trackedSeason.episodes.find(e => e.episodeNumber === ep.episodeNumber)?.watched)
       : false;
     html += `
       <div class="episode-row" data-n="${ep.episodeNumber}">
@@ -1252,6 +1333,10 @@ function handleInfoEpisodeToggle(previewShow, seasonNumber, episode) {
   const tracked = ensureShowTracked(previewShow, "watching");
   if (!wasTracked) showToast(`${tracked.title} added to your shows`);
   const season = tracked.seasons.find(s => s.seasonNumber === seasonNumber);
+  if (season.collapsed) {
+    showToast("This season's episode data has been cleared to save space — use Refresh episode data first");
+    return;
+  }
   const ep = season.episodes.find(e => e.episodeNumber === episode.episodeNumber);
   setEpisodeWatched(ep, !ep.watched, tracked);
   persist();
@@ -1260,10 +1345,10 @@ function handleInfoEpisodeToggle(previewShow, seasonNumber, episode) {
 
 function openInfoEpisodeSheet(previewShow, season, episode) {
   const tracked = findShow(previewShow.id);
-  const trackedEpisode = tracked
-    ? tracked.seasons.find(s => s.seasonNumber === season.seasonNumber)?.episodes.find(e => e.episodeNumber === episode.episodeNumber)
-    : null;
-  const watched = trackedEpisode ? trackedEpisode.watched : false;
+  const trackedSeason = tracked ? tracked.seasons.find(s => s.seasonNumber === season.seasonNumber) : null;
+  const watched = trackedSeason
+    ? (trackedSeason.collapsed ? true : !!trackedSeason.episodes.find(e => e.episodeNumber === episode.episodeNumber)?.watched)
+    : false;
   const aired = hasAired(episode.airDate);
 
   closeSheet();
