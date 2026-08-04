@@ -115,9 +115,15 @@ function trimShowOverviews(show) {
 // anymore - only "Refresh episode data" restores full detail.
 function collapseFullyWatchedSeasons(show) {
   let changed = false;
+  const latestSeasonNumber = Math.max(...show.seasons.map(s => s.seasonNumber));
+  const showStillActive = show.status !== "Ended" && show.status !== "Canceled";
   show.seasons.forEach(season => {
     if (season.collapsed) return;
     if (!season.episodes || season.episodes.length === 0) return;
+    // Don't collapse the latest season of a still-airing show, even if every
+    // currently-known episode is watched - new episodes can be added to this
+    // exact season at any time, and it needs to stay expanded to notice them.
+    if (showStillActive && season.seasonNumber === latestSeasonNumber) return;
     if (season.episodes.every(e => e.watched)) {
       const lastWatchedDate = season.episodes
         .map(e => e.watchedDate)
@@ -761,10 +767,12 @@ async function refreshShowData(show) {
     if (ep.id in watchedById) {
       ep.watched = true;
       ep.watchedDate = watchedById[ep.id];
-    } else if (collapsedSeasons[season.seasonNumber]) {
-      // This season was previously collapsed (fully watched). Restore that,
-      // approximating each episode's watch date from the season's last-known
-      // date, since individual dates aren't kept once collapsed.
+    } else if (collapsedSeasons[season.seasonNumber] && ep.episodeNumber <= collapsedSeasons[season.seasonNumber].episodeCount) {
+      // This episode existed back when the season was collapsed (fully
+      // watched) - restore that. Critically, episodes numbered beyond what
+      // existed at collapse time are genuinely new and must stay unwatched -
+      // otherwise a show that gets new episodes after its season collapsed
+      // would have those new episodes silently marked watched too.
       ep.watched = true;
       ep.watchedDate = collapsedSeasons[season.seasonNumber].lastWatchedDate || null;
     }
