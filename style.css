@@ -474,6 +474,16 @@ h1.page-title {
   color: var(--text-muted);
 }
 
+.collapsed-season-notice {
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--card);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 0 0 20px;
+}
+
 .episode-list {
   background: var(--card);
   border-radius: 14px;
