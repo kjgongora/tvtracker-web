@@ -345,8 +345,12 @@ function daysSince(dateStr) {
 
 function isPaused(show) {
   if (show.manuallyPaused) return true;
+  if (!hasAnyWatchedEpisode(show)) return false; // never watched at all - Not Started territory, not Paused
   const latest = mostRecentWatchedDate(show);
-  if (!latest) return false;
+  // No dated evidence of recent activity, despite having watched episodes,
+  // means this is legacy data from before watchedDate tracking existed -
+  // treat that as stale rather than assuming it's recent.
+  if (!latest) return true;
   return daysSince(latest.toISOString()) >= 30;
 }
 
