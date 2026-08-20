@@ -50,13 +50,15 @@ function easternTimeToUTC(dateStr, hour, minute) {
 }
 
 // Fallback ONLY: used when we have no real per-episode broadcast time (see
-// tvmaze-client.js, which supplies the actual air time for most shows). This
-// deliberately does NOT guess a time of day — it marks the episode available
-// from the start of its air date in Eastern time, since assuming everything
-// airs at some fixed hour (e.g. 9pm) is wrong for most shows.
+// tvmaze-client.js, which supplies the actual air time for most shows).
+// Uses end-of-day Eastern rather than start-of-day: most shows air in the
+// evening, so a start-of-day fallback made episodes appear available many
+// hours before they actually released. End-of-day biases the other way -
+// worst case something appears a few hours "late" in the tracker, which is
+// a much better failure mode than appearing before it's actually out.
 function episodeAirDateTimeFallback(dateOnlyStr) {
   if (!dateOnlyStr) return null;
-  return easternTimeToUTC(dateOnlyStr, 0, 0).toISOString();
+  return easternTimeToUTC(dateOnlyStr, 23, 59).toISOString();
 }
 
 function hasAired(isoDate) {
