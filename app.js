@@ -460,11 +460,14 @@ function wireSwipeableRow(row) {
   const content = row.querySelector(".watch-list-content");
   const ACTION_WIDTH = 132;
   const MARK_WATCHED_THRESHOLD = 76;
+  const AXIS_LOCK_THRESHOLD = 8; // px of movement before deciding horizontal vs. vertical intent
 
   let settledX = 0;
   let startClientX = 0;
+  let startClientY = 0;
   let dragging = false;
   let didDrag = false;
+  let axis = null; // null until decided, then "horizontal" or "vertical"
 
   function setX(x, animate) {
     content.style.transition = animate ? "transform 0.22s ease-out" : "none";
@@ -476,21 +479,47 @@ function wireSwipeableRow(row) {
   content.addEventListener("pointerdown", e => {
     dragging = true;
     didDrag = false;
+    axis = null;
     startClientX = e.clientX;
-    content.setPointerCapture(e.pointerId);
+    startClientY = e.clientY;
+    // Deliberately NOT capturing the pointer yet - we don't know if this is a
+    // horizontal swipe or a vertical scroll until we see which way it moves.
+    // Capturing too early would hijack vertical scrolling before we can tell.
   });
 
   content.addEventListener("pointermove", e => {
     if (!dragging) return;
-    const delta = e.clientX - startClientX;
-    if (Math.abs(delta) > 8) didDrag = true;
-    const next = Math.max(Math.min(settledX + delta, 90), -ACTION_WIDTH - 16);
+    const deltaX = e.clientX - startClientX;
+    const deltaY = e.clientY - startClientY;
+
+    if (axis === null) {
+      const absX = Math.abs(deltaX);
+      const absY = Math.abs(deltaY);
+      if (absY > AXIS_LOCK_THRESHOLD && absY > absX) {
+        // Clearly a vertical scroll attempt - bow out entirely and let the
+        // page handle it natively. Never touch the row's transform.
+        axis = "vertical";
+        dragging = false;
+        return;
+      }
+      if (absX > AXIS_LOCK_THRESHOLD && absX > absY) {
+        axis = "horizontal";
+        content.setPointerCapture(e.pointerId);
+      } else {
+        return; // not enough movement yet to tell - wait for more
+      }
+    }
+
+    if (axis !== "horizontal") return;
+    didDrag = true;
+    const next = Math.max(Math.min(settledX + deltaX, 90), -ACTION_WIDTH - 16);
     setX(next, false);
   });
 
   function endDrag(e) {
     if (!dragging) return;
     dragging = false;
+    if (axis !== "horizontal") return; // vertical scroll or an undecided tap - nothing to settle
     const delta = e.clientX - startClientX;
     const finalX = Math.max(Math.min(settledX + delta, 90), -ACTION_WIDTH - 16);
 
