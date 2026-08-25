@@ -822,6 +822,50 @@ async function refreshShowData(show) {
   persist();
 }
 
+// Re-syncs every tracked show at once, using the same refreshShowData logic
+// as the per-show "Refresh episode data" action. Useful after a bug fix like
+// the season-collapse repair, so people don't have to hunt down and manually
+// refresh each show that might have lingering bad data from before the fix.
+async function refreshAllShows() {
+  const refreshable = shows.filter(s => s.tmdbId);
+  const total = refreshable.length;
+  const btn = document.getElementById("refresh-all-btn");
+
+  if (total === 0) {
+    showToast("No shows to refresh");
+    return;
+  }
+
+  let completed = 0;
+  const failed = [];
+
+  function updateProgress() {
+    if (document.getElementById("refresh-all-btn")) {
+      document.getElementById("refresh-all-btn").textContent = `Refreshing ${completed}/${total}\u2026`;
+      document.getElementById("refresh-all-btn").disabled = true;
+    }
+  }
+  updateProgress();
+
+  await mapWithConcurrency(refreshable, 3, async show => {
+    try {
+      await refreshShowData(show);
+    } catch (err) {
+      failed.push(show.title);
+    }
+    completed++;
+    updateProgress();
+  });
+
+  if (failed.length === 0) {
+    showToast(`Refreshed all ${total} shows`);
+  } else {
+    showToast(`Refreshed ${total - failed.length}/${total}. Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "\u2026" : ""}`);
+  }
+
+  if (activeTab === "settings") renderSettings();
+}
+
 function wireCardTapAndLongPress(card) {
   let pressTimer = null;
   let longPressed = false;
@@ -1439,10 +1483,12 @@ function renderSettings() {
       <div class="settings-group">
         <div class="settings-row"><button class="row-btn" id="backup-btn">Back up data</button></div>
         <div class="settings-row"><button class="row-btn" id="restore-btn">Restore from backup</button></div>
+        <div class="settings-row"><button class="row-btn" id="refresh-all-btn">Refresh all shows</button></div>
       </div>
       <p class="settings-footer" id="backup-footer">
         ${settings.lastBackup ? `Last backup: ${new Date(settings.lastBackup).toLocaleString()}` : "Your watch history and progress are stored on this device. Back up to export a copy."}
       </p>
+      <p class="settings-footer">Re-fetches every show's episode data from scratch, correcting any that got out of sync - useful after an app update, or if a show's episodes look wrong.</p>
       <input type="file" id="restore-file" accept="application/json" style="display:none">
     </div>
 
@@ -1479,6 +1525,11 @@ function renderSettings() {
     ]);
   });
   document.getElementById("restore-file").addEventListener("change", handleRestoreFile);
+  document.getElementById("refresh-all-btn").addEventListener("click", () => {
+    openSheet(`Refresh all ${shows.length} shows?`, [
+      { label: "Refresh all shows", action: refreshAllShows }
+    ]);
+  });
 }
 
 function toggleRow(label, key) {
