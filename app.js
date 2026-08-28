@@ -343,26 +343,46 @@ function daysSince(dateStr) {
   return (Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24);
 }
 
+// Whichever is more recent: when the show was added, or when the currently
+// pending episode aired. This lets a fresh add of an old, already-aired show
+// get a real 30-day grace period from when you added it, while a genuinely
+// new episode dropping on a show you've had a while resets the clock to that
+// fresh drop instead - both cases matter and shouldn't fight each other.
+function watchNextReferenceDate(show, activeEpisode) {
+  const added = show.dateAdded ? new Date(show.dateAdded) : null;
+  const aired = activeEpisode.airDate ? new Date(activeEpisode.airDate) : null;
+  if (added && aired) return added > aired ? added : aired;
+  return added || aired;
+}
+
+// Paused and Not Started now share one clock - how long the pending episode
+// has been sitting there aired and unwatched - rather than depending on when
+// you last watched anything. That sidesteps a real problem: episodes marked
+// watched before watchedDate tracking existed have no timestamp at all, so
+// "time since last watched" was unusable for a lot of real watch history.
+// Whether a show lands in Paused vs Not Started depends only on whether it
+// has ever been watched at all.
 function isPaused(show) {
   if (show.manuallyPaused) return true;
   if (!hasAnyWatchedEpisode(show)) return false; // never watched at all - Not Started territory, not Paused
-  const latest = mostRecentWatchedDate(show);
-  // No dated evidence of recent activity, despite having watched episodes,
-  // means this is legacy data from before watchedDate tracking existed -
-  // treat that as stale rather than assuming it's recent.
-  if (!latest) return true;
-  return daysSince(latest.toISOString()) >= 30;
+  const active = activeSeasonAndEpisode(show);
+  if (!active) return false; // shouldn't happen for an eligible show, but don't crash if it does
+  return daysSince(active.episode.airDate) >= 30;
 }
 
 // A never-watched show counts as "Not Started" either because it's an
 // explicit Watchlist add (state === "notStarted" — no need to wait, choosing
-// "watchlist only" already is the signal), or because a month has passed
-// since it was added as Watching with zero engagement.
+// "watchlist only" already is the signal), or because 30 days have passed
+// since whichever is more recent: adding the show, or the pending episode airing.
 function isNotStarted(show) {
   if (hasAnyWatchedEpisode(show)) return false;
   if (show.state === "notStarted") return true;
   if (show.manuallyPaused) return false;
-  return daysSince(show.dateAdded) >= 30;
+  const active = activeSeasonAndEpisode(show);
+  if (!active) return false;
+  const ref = watchNextReferenceDate(show, active.episode);
+  if (!ref) return true; // no reference at all - shouldn't really happen, but treat conservatively
+  return daysSince(ref.toISOString()) >= 30;
 }
 
 function renderWatching() {
