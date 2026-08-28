@@ -362,12 +362,26 @@ function watchNextReferenceDate(show, activeEpisode) {
 // "time since last watched" was unusable for a lot of real watch history.
 // Whether a show lands in Paused vs Not Started depends only on whether it
 // has ever been watched at all.
+// Paused requires BOTH of these to be stale - either one being fresh is
+// enough to stay in Watch Next:
+//   1. You've marked something watched within 30 days (real activity, no
+//      matter how old the episode itself is - this is what makes catching up
+//      on an old backlog correctly count as "actively engaging")
+//   2. The pending episode is itself fresh (aired within 30 days), which
+//      covers a legacy show with no watch-date history at all, or an
+//      infrequently-releasing show where a new episode just dropped even if
+//      your last watch was a while back.
 function isPaused(show) {
   if (show.manuallyPaused) return true;
   if (!hasAnyWatchedEpisode(show)) return false; // never watched at all - Not Started territory, not Paused
   const active = activeSeasonAndEpisode(show);
   if (!active) return false; // shouldn't happen for an eligible show, but don't crash if it does
-  return daysSince(active.episode.airDate) >= 30;
+
+  const latest = mostRecentWatchedDate(show);
+  const recentlyActive = !!latest && daysSince(latest.toISOString()) < 30;
+  const pendingEpisodeFresh = daysSince(active.episode.airDate) < 30;
+
+  return !recentlyActive && !pendingEpisodeFresh;
 }
 
 // A never-watched show counts as "Not Started" either because it's an
