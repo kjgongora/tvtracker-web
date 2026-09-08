@@ -818,7 +818,8 @@ async function refreshShowData(show) {
   // data from before this fix, shrinking storage for shows added earlier.
   const fresh = await fetchFullShow(show.tmdbId, { includeCast: false });
 
-  const watchedById = {};
+  const watchedById = {}; // id -> { watchedDate, title }
+  const watchedByTitle = {}; // "seasonNumber::title" -> watchedDate - a fallback for when TMDB renumbers episodes
   const collapsedSeasons = {}; // seasonNumber -> prior collapsed season summary
   show.seasons.forEach(season => {
     if (season.collapsed) {
@@ -826,14 +827,32 @@ async function refreshShowData(show) {
       return;
     }
     season.episodes.forEach(ep => {
-      if (ep.watched) watchedById[ep.id] = ep.watchedDate || null;
+      if (ep.watched) {
+        watchedById[ep.id] = { watchedDate: ep.watchedDate || null, title: ep.title || null };
+        if (ep.title) {
+          watchedByTitle[`${season.seasonNumber}::${ep.title.trim().toLowerCase()}`] = ep.watchedDate || null;
+        }
+      }
     });
   });
 
   fresh.seasons.forEach(season => season.episodes.forEach(ep => {
-    if (ep.id in watchedById) {
+    const titleKey = ep.title ? `${season.seasonNumber}::${ep.title.trim().toLowerCase()}` : null;
+    const idMatch = watchedById[ep.id];
+
+    if (idMatch && (!ep.title || !idMatch.title || idMatch.title === ep.title)) {
+      // ID matches, and either we have no title to compare or the titles
+      // agree - safe to trust this as the same episode.
       ep.watched = true;
-      ep.watchedDate = watchedById[ep.id];
+      ep.watchedDate = idMatch.watchedDate;
+    } else if (titleKey && titleKey in watchedByTitle) {
+      // The ID either didn't match, or matched an episode whose title has
+      // since changed - a sign TMDB renumbered this season (inserted or
+      // reordered an episode) and the sequential ID isn't a stable
+      // identifier for that. Trust the title match instead, so real watch
+      // history doesn't silently disappear.
+      ep.watched = true;
+      ep.watchedDate = watchedByTitle[titleKey];
     } else if (collapsedSeasons[season.seasonNumber] && ep.episodeNumber <= collapsedSeasons[season.seasonNumber].episodeCount) {
       // This episode existed back when the season was collapsed (fully
       // watched) - restore that. Critically, episodes numbered beyond what
@@ -1581,15 +1600,18 @@ function toggleRow(label, key) {
 
 function performBackup() {
   const payload = { exportedAt: new Date().toISOString(), shows, settings };
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
+  const json = JSON.stringify(payload, null, 2);
+  // A data: URI avoids Safari's well-documented Blob/ObjectURL bug
+  // ("WebKitBlobResource error 1") entirely - there's no transient object
+  // whose lifecycle Safari can prematurely expire, since the whole file is
+  // self-contained directly in the URL rather than a revocable reference.
+  const dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(json);
   const a = document.createElement("a");
-  a.href = url;
+  a.href = dataUri;
   a.download = `tvtracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
 
   settings.lastBackup = new Date().toISOString();
   saveSettings(settings);
